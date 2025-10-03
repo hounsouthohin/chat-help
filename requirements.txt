@@ -1,24 +1,8 @@
-# Base Python
-python-dotenv
-requests
-transformers
+# MCP Server
+mcp>=0.9.0
 
-# LangGraph + LangChain
-langgraph
-langchain
-langchain-core
-langchain-ollama
+# Async HTTP client
+aiohttp>=3.9.0
 
-# Smolagents (agents + outils)
-smolagents
-
-# Recherche Web
-duckduckgo-search
-ddgs
-
-# Serveur/API (pour exposer ton bot en local ou web)
-fastapi
-uvicorn
-
-# Tests et utils
-pytest
+# Utilities
+python-dotenv>=1.0.0
