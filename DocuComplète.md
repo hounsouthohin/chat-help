@@ -1,629 +1,364 @@
-# Rapport Complet : Implémentation MCP avec n8n et Ollama
+Tutorial Complet : Connecter un Serveur MCP à n8n via Docker
+📚 Table des matières
 
-## Résumé Exécutif
+Vue d'ensemble du projet
+Architecture du système
+Composants du serveur MCP
+Configuration Docker
+Connexion à n8n
+Étapes que vous avez suivies
+Dépannage
 
-Ce document présente l'implémentation complète d'une architecture basée sur le **Model Context Protocol (MCP)** intégrée avec **n8n** et **Ollama**, permettant de créer un système d'automatisation intelligent avec des outils personnalisés.
 
-**Résultat final** : ✅ Système opérationnel avec 6 outils MCP fonctionnels accessibles depuis n8n via AI Agent
+🎯 Vue d'ensemble du projet {#vue-densemble}
+Qu'est-ce qu'on a construit ?
+Vous avez créé un serveur MCP (Model Context Protocol) qui expose des outils d'assistance (veille technologique, navigation web, apprentissage, etc.) que n8n peut utiliser dans ses workflows d'automatisation.
+MCP = Model Context Protocol : Un protocole qui permet aux LLMs (comme les agents n8n) d'utiliser des outils externes de manière standardisée.
+Schéma de l'architecture
+┌─────────────────────────────────────────────────┐
+│              Docker Network (demo)              │
+│                                                 │
+│  ┌──────────────┐         ┌─────────────────┐  │
+│  │     n8n      │ ◄─────► │  chat-help-mcp  │  │
+│  │  (Port 5678) │  HTTP   │   (Port 8080)   │  │
+│  └──────────────┘         └─────────────────┘  │
+│         │                          │            │
+│         │                    ┌─────▼─────┐      │
+│    ┌────▼────┐              │  8 Outils  │      │
+│    │Postgres │              │ MCP Tools  │      │
+│    └─────────┘              └────────────┘      │
+│                                                 │
+└─────────────────────────────────────────────────┘
+         ▲
+         │ Utilisateur accède via http://localhost:5678
 
----
+🏗️ Architecture du système {#architecture}
+Les 3 couches principales
 
-## 1. Architecture Finale
+Couche Réseau (Docker) : Tous les conteneurs communiquent via le réseau demo
+Couche Application (MCP Server) : Serveur Python qui expose les outils via HTTP
+Couche Client (n8n) : Consomme les outils MCP dans ses workflows
 
-### 1.1 Stack Technologique
 
-```
-┌─────────────────── USER ───────────────────┐
-                      ↓
-              [Interface Chat n8n]
-                      ↓
-┌─────────────── n8n Workflow ───────────────┐
-│  Chat Trigger → AI Agent (Ollama)          │
-│                      ↓                      │
-│              [MCP Client Node]             │
-│         (HTTP Streamable Transport)        │
-└────────────────────┬───────────────────────┘
-                     │ JSON-RPC 2.0
-                     ↓
-┌──────── chat-help-mcp Server ──────────────┐
-│  Protocol: MCP 2024-11-05                  │
-│  Transport: HTTP Streamable                │
-│  Port: 8080                                │
-│                                            │
-│  Outils disponibles (6):                  │
-│  ├─ search_wiki                           │
-│  ├─ explain_concept                       │
-│  ├─ analyze_code                          │
-│  ├─ debug_helper                          │
-│  ├─ get_joke                              │
-│  └─ motivational_quote                    │
-└────────────────────────────────────────────┘
-```
-
-### 1.2 Flux de données
-
-```
-User Message
-    ↓
-Chat Trigger (n8n)
-    ↓
-AI Agent (Ollama llama3.2)
-    ↓
-Décision d'utiliser un outil MCP
-    ↓
-MCP Client Node
-    ↓
-HTTP POST → chat-help-mcp:8080/
-    ↓
-Exécution de l'outil Python
-    ↓
-Résultat JSON-RPC
-    ↓
-AI Agent formatte la réponse
-    ↓
-User reçoit la réponse
-```
-
----
-
-## 2. Configuration Docker
-
-### 2.1 Services déployés
-
-| Service | Image | Port | Réseau | Rôle |
-|---------|-------|------|--------|------|
-| **postgres** | postgres:16-alpine | 5432 | demo | Base de données n8n |
-| **n8n** | n8nio/n8n:latest | 5678 | demo | Moteur de workflows |
-| **ollama** | ollama/ollama:latest | 11434 | demo | Modèle IA (llama3.2) |
-| **qdrant** | qdrant/qdrant | 6333 | demo | Base vectorielle |
-| **chat-help-mcp** | chat-help-mcp (custom) | 8080 | demo | Serveur MCP |
-
-### 2.2 Réseau Docker
-
-Tous les services sont sur le réseau `demo`, permettant la communication inter-conteneurs :
-- n8n → chat-help-mcp : `http://chat-help-mcp:8080/`
-- n8n → ollama : `http://ollama:11434`
-
----
-
-## 3. Serveur MCP - Implémentation détaillée
-
-### 3.1 Fichier principal : `server.py`
-
-```python
-#!/usr/bin/env python3
-"""
-Serveur MCP conforme au protocole officiel 2024-11-05
-Transport: HTTP Streamable
-"""
+🛠️ Composants du serveur MCP {#composants-mcp}
+1. Le fichier server.py
+C'est le cœur de votre serveur MCP. Voici comment il fonctionne :
+a) Import et configuration
+pythonfrom aiohttp import web  # Serveur web asynchrone
 import asyncio
 import json
 import logging
-from aiohttp import web
 
+# Configuration des logs
+LOG_FILE = "/app/data/mcp_server.log"
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Import des outils
-from tools.wiki_tools import search_wiki
-from tools.learning_tools import explain_concept, get_joke, motivational_quote
-from tools.code_tools import analyze_code, debug_helper
-
-# Configuration
-PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {
-    "name": "chat-help-mcp",
-    "version": "1.0.0"
-}
-
-# Définition des 6 outils MCP
-TOOLS = [
+Pourquoi aiohttp ? : Parce qu'on a besoin d'un serveur web asynchrone pour gérer plusieurs requêtes simultanées efficacement.
+b) Définition des outils
+pythonTOOLS = [
     {
-        "name": "search_wiki",
-        "description": "Recherche sur Wikipedia",
+        "name": "navigate_web",
+        "description": "🌐 Navigateur web intelligent",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Terme de recherche"},
-                "category": {"type": "string", "description": "Catégorie optionnelle"}
+                "query": {"type": "string"},
+                # ... autres paramètres
             },
             "required": ["query"]
         }
     },
-    # ... autres outils
+    # ... 7 autres outils
 ]
+Format MCP : Chaque outil est décrit avec :
 
-class MCPHTTPServer:
-    """Serveur MCP avec transport HTTP standard"""
-    
+name : Identifiant unique
+description : Ce que fait l'outil
+inputSchema : Schéma JSON des paramètres attendus
+
+c) La classe MCPHTTPServer
+pythonclass MCPHTTPServer:
     def __init__(self):
         self.app = web.Application()
-        self.initialized = False
-        self.setup_cors()
-        self.setup_routes()
-    
-    def setup_routes(self):
-        """Configure les endpoints MCP"""
-        # Endpoint principal JSON-RPC
-        self.app.router.add_post('/', self.handle_jsonrpc)
-        
-        # Endpoints REST alternatifs
-        self.app.router.add_post('/initialize', self.handle_initialize_rest)
-        self.app.router.add_get('/tools', self.handle_tools_list_rest)
-        self.app.router.add_post('/tools/call', self.handle_tool_call_rest)
-        
-        # Health check
-        self.app.router.add_get('/health', self.health_check)
-    
-    async def handle_jsonrpc(self, request):
-        """
-        Gère les requêtes JSON-RPC selon le protocole MCP
-        
-        Méthodes supportées:
-        - initialize : Handshake initial
-        - tools/list : Liste des outils
-        - tools/call : Exécution d'un outil
-        - ping : Health check
-        """
-        data = await request.json()
-        method = data.get('method')
-        params = data.get('params', {})
-        req_id = data.get('id')
-        
-        if method == 'initialize':
-            return await self.handle_initialize(params, req_id)
-        elif method == 'tools/list':
-            return await self.handle_tools_list(req_id)
-        elif method == 'tools/call':
-            return await self.handle_tool_call(params, req_id)
-        # ... autres méthodes
-```
-
-### 3.2 Protocole JSON-RPC 2.0
-
-#### Format de requête
-
-```json
-{
+        self.setup_cors()      # Configure CORS pour autoriser n8n
+        self.setup_routes()    # Définit les endpoints HTTP
+Rôle : Gère les requêtes HTTP et les traduit en appels d'outils MCP.
+d) Les endpoints clés
+EndpointMéthodeRôle/POSTPrincipal - Reçoit les requêtes JSON-RPC de n8n/healthGETVérification que le serveur fonctionne/toolsGETListe tous les outils disponibles/initializePOSTInitialisation de la connexion MCP
+e) Le protocole JSON-RPC 2.0
+Votre serveur communique avec n8n via JSON-RPC 2.0 :
+Requête d'initialisation :
+json{
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "tools/call",
+  "method": "initialize",
   "params": {
-    "name": "get_joke",
-    "arguments": {
-      "language": "fr"
-    }
+    "protocolVersion": "2024-11-05"
   }
 }
-```
-
-#### Format de réponse
-
-```json
-{
+Réponse :
+json{
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "content": [
-      {
-        "type": "text",
-        "text": "{\"success\": true, \"joke\": \"...\", \"answer\": \"...\"}"
-      }
-    ]
-  }
-}
-```
-
-#### Format d'erreur
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32601,
-    "message": "Method not found: unknown_method"
-  }
-}
-```
-
----
-
-## 4. Protocole de Transport : HTTP Streamable
-
-### 4.1 Qu'est-ce que HTTP Streamable ?
-
-Le transport **HTTP Streamable** est une variante du protocole MCP qui utilise HTTP standard pour la communication, contrairement à SSE (Server-Sent Events) ou stdio.
-
-**Caractéristiques** :
-- ✅ Requêtes/Réponses HTTP classiques (POST)
-- ✅ Format JSON-RPC 2.0
-- ✅ Compatible avec les firewalls
-- ✅ Facile à déboguer
-- ✅ Pas de connexion persistante
-
-### 4.2 Séquence d'initialisation
-
-```
-n8n MCP Client                 chat-help-mcp Server
-      |                                  |
-      |  POST /                          |
-      |  {"method": "initialize"}        |
-      |--------------------------------->|
-      |                                  |
-      |  200 OK                          |
-      |  {protocolVersion, capabilities} |
-      |<---------------------------------|
-      |                                  |
-      |  POST /                          |
-      |  {"method": "tools/list"}        |
-      |--------------------------------->|
-      |                                  |
-      |  200 OK                          |
-      |  {tools: [...]}                  |
-      |<---------------------------------|
-      |                                  |
-      | ✓ Connexion établie              |
-```
-
-### 4.3 Appel d'outil
-
-```
-n8n MCP Client                 chat-help-mcp Server
-      |                                  |
-      |  POST /                          |
-      |  {"method": "tools/call",        |
-      |   "params": {                    |
-      |     "name": "get_joke",          |
-      |     "arguments": {...}           |
-      |   }}                             |
-      |--------------------------------->|
-      |                                  |
-      |         Exécution de l'outil     |
-      |         └─> get_joke(args)       |
-      |                                  |
-      |  200 OK                          |
-      |  {"result": {"content": [...]}}  |
-      |<---------------------------------|
-```
-
----
-
-## 5. Outils MCP Disponibles
-
-### 5.1 search_wiki
-
-**Description** : Recherche sur Wikipedia
-
-**Paramètres** :
-```json
-{
-  "query": "string (requis)",
-  "category": "string (optionnel)"
-}
-```
-
-**Exemple d'utilisation** :
-```json
-{
-  "name": "search_wiki",
-  "arguments": {
-    "query": "Python programming"
-  }
-}
-```
-
-**Implémentation** (`tools/wiki_tools.py`) :
-```python
-async def search_wiki(query: str, category: str = None) -> dict:
-    """Recherche sur Wikipedia"""
-    try:
-        import wikipediaapi
-        wiki = wikipediaapi.Wikipedia('fr')
-        page = wiki.page(query)
-        
-        if page.exists():
-            return {
-                "success": True,
-                "title": page.title,
-                "summary": page.summary[:500],
-                "url": page.fullurl
-            }
-        else:
-            return {
-                "success": False,
-                "error": "Page non trouvée"
-            }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-```
-
-### 5.2 explain_concept
-
-**Description** : Explique un concept de manière pédagogique
-
-**Paramètres** :
-```json
-{
-  "concept": "string (requis)",
-  "level": "beginner | intermediate | advanced (optionnel)"
-}
-```
-
-### 5.3 analyze_code
-
-**Description** : Analyse du code source
-
-**Paramètres** :
-```json
-{
-  "code": "string (requis)",
-  "language": "string (requis)"
-}
-```
-
-### 5.4 debug_helper
-
-**Description** : Aide au débogage d'erreurs
-
-**Paramètres** :
-```json
-{
-  "error_message": "string (requis)",
-  "context": "string (optionnel)"
-}
-```
-
-### 5.5 get_joke
-
-**Description** : Obtient une blague aléatoire
-
-**Paramètres** :
-```json
-{
-  "language": "fr | en (optionnel, défaut: fr)"
-}
-```
-
-**Exemple de réponse** :
-```json
-{
-  "success": true,
-  "joke": "Comment appelle-t-on un informaticien qui sort dehors ?",
-  "answer": "Un bug rare ! 🌞",
-  "language": "fr"
-}
-```
-
-### 5.6 motivational_quote
-
-**Description** : Obtient une citation motivante
-
-**Paramètres** : Aucun
-
----
-
-## 6. Intégration avec n8n
-
-### 6.1 Configuration du nœud MCP Client
-
-**Paramètres obligatoires** :
-
-| Paramètre | Valeur | Description |
-|-----------|--------|-------------|
-| **Endpoint** | `http://chat-help-mcp:8080/` | URL du serveur MCP |
-| **Server Transport** | `HTTP Streamable` | Type de transport |
-| **Authentication** | `None` | Pas d'authentification |
-| **Tools to Include** | `All` | Inclure tous les outils |
-
-### 6.2 Workflow n8n
-
-```
-┌─────────────────┐
-│  Chat Trigger   │ ← Point d'entrée utilisateur
-└────────┬────────┘
-         │
-         ↓
-┌─────────────────┐
-│   AI Agent      │ ← Ollama llama3.2
-│                 │
-│  Chat Model: ──────→ Ollama Chat Model (llama3.2)
-│  Memory: ───────────→ Window Buffer Memory
-│  Tools: ────────────→ MCP Client
-└─────────────────┘
-         │
-         ↓
-┌─────────────────┐
-│   MCP Client    │ ← Connexion au serveur MCP
-│                 │
-│  Endpoint: http://chat-help-mcp:8080/
-│  Transport: HTTP Streamable
-│  
-│  Outils exposés:
-│  - search_wiki
-│  - explain_concept
-│  - analyze_code
-│  - debug_helper
-│  - get_joke
-│  - motivational_quote
-└─────────────────┘
-```
-
-### 6.3 Fonctionnement
-
-1. **User** envoie un message via le chat
-2. **Chat Trigger** capture le message
-3. **AI Agent** (Ollama) analyse le message
-4. **AI Agent** décide d'utiliser un outil MCP si nécessaire
-5. **MCP Client** appelle le serveur `chat-help-mcp:8080`
-6. **Serveur MCP** exécute l'outil Python
-7. **Résultat** retourne via JSON-RPC
-8. **AI Agent** formatte et renvoie la réponse à l'utilisateur
-
----
-
-## 7. Déploiement
-
-### 7.1 Prérequis
-
-- Docker et Docker Compose installés
-- 8 Go RAM minimum
-- 20 Go d'espace disque
-
-### 7.2 Procédure de déploiement
-
-```powershell
-# 1. Cloner/préparer le projet
-cd self-hosted-ai-starter-kit
-
-# 2. Configurer les variables d'environnement
-# Éditer .env avec les valeurs appropriées
-
-# 3. Construire l'image du serveur MCP
-docker-compose build chat-help-mcp
-
-# 4. Démarrer tous les services
-docker-compose up -d
-
-# 5. Vérifier que tous les conteneurs sont démarrés
-docker ps
-
-# 6. Vérifier les logs
-docker logs chat-help-mcp
-docker logs n8n
-docker logs ollama
-
-# 7. Accéder à n8n
-# Ouvrir http://localhost:5678
-```
-
-### 7.3 Vérification du déploiement
-
-```powershell
-# Health check du serveur MCP
-curl http://localhost:8080/health
-
-# Résultat attendu:
-# {
-#   "status": "ok",
-#   "service": "chat-help-mcp",
-#   "protocol": "MCP-HTTP",
-#   "version": "1.0.0",
-#   "tools_count": 6,
-#   "initialized": false
-# }
-
-# Test de la liste des outils
-$body = @{
-    jsonrpc = "2.0"
-    id = 1
-    method = "tools/list"
-    params = @{}
-} | ConvertTo-Json
-
-Invoke-WebRequest -Uri "http://localhost:8080/" `
-    -Method POST `
-    -ContentType "application/json" `
-    -Body $body
-```
-
----
-
-## 8. Tests et Validation
-
-### 8.1 Test unitaire d'un outil
-
-```powershell
-# Test de get_joke
-$body = @{
-    jsonrpc = "2.0"
-    id = 1
-    method = "tools/call"
-    params = @{
-        name = "get_joke"
-        arguments = @{
-            language = "fr"
-        }
+    "protocolVersion": "2024-11-05",
+    "capabilities": {"tools": {}},
+    "serverInfo": {
+      "name": "chat-help",
+      "version": "2.0.0"
     }
-} | ConvertTo-Json -Depth 10
+  }
+}
 
-$response = Invoke-WebRequest -Uri "http://localhost:8080/" `
-    -Method POST `
-    -ContentType "application/json" `
-    -Body $body
+🐳 Configuration Docker {#configuration-docker}
+1. Le Dockerfile (votre container)
+Structure typique :
+dockerfileFROM python:3.11-slim
 
-$response.Content | ConvertFrom-Json | ConvertTo-Json -Depth 10
-```
+WORKDIR /app
 
-### 8.2 Test dans n8n
+# Installation des dépendances
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-1. Créer un workflow avec Chat Trigger + AI Agent + MCP Client
-2. Lancer le workflow en mode test
-3. Envoyer un message : "Raconte-moi une blague"
-4. Vérifier que l'AI Agent appelle l'outil `get_joke`
-5. Confirmer la réponse contient bien une blague
+# Copie du code
+COPY . .
 
-### 8.3 Logs de débogage
+# Port exposé
+EXPOSE 8080
 
-```powershell
-# Suivre les logs en temps réel
-docker logs -f chat-help-mcp
+# Commande de démarrage
+CMD ["python", "server.py"]
+Ce qui se passe :
 
-# Logs attendus lors d'un appel d'outil:
-# INFO:__main__:📨 JSON-RPC: tools/call (id: 1)
-# INFO:__main__:🔧 Appel outil: get_joke
-# INFO:__main__:🔧 Exécution: get_joke
-```
+Part d'une image Python légère
+Installe les dépendances (aiohttp, etc.)
+Copie votre code
+Expose le port 8080
+Lance server.py au démarrage
 
----
+2. Le docker-compose.yaml
+Service chat-help-mcp
+yamlchat-help-mcp:
+  build: .                        # Construit l'image depuis le Dockerfile
+  container_name: chat-help-mcp   # Nom du conteneur
+  hostname: chat-help-mcp         # Nom DNS dans le réseau Docker
+  networks:
+    - demo                        # Réseau partagé avec n8n
+  ports:
+    - "8080:8080"                 # Port externe:interne
+  environment:
+    - MCP_HOST=0.0.0.0           # Écoute sur toutes les interfaces
+    - MCP_PORT=8080               # Port interne
+  command: python server.py       # Commande de démarrage
+  healthcheck:                    # Vérification de santé
+    test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")'"]
+    interval: 10s                 # Teste toutes les 10s
+    retries: 5                    # 5 tentatives max
+    start_period: 15s             # Attendre 15s avant le premier test
+Pourquoi le healthcheck ? : Pour que n8n attende que le serveur MCP soit vraiment prêt avant de démarrer.
+Service n8n
+yamln8n:
+  image: n8nio/n8n:latest
+  container_name: chat-help-n8n
+  hostname: n8n
+  networks:
+    - demo                        # Même réseau que MCP
+  depends_on:
+    postgres:
+      condition: service_healthy
+    chat-help-mcp:
+      condition: service_healthy  # Attend que MCP soit healthy
+  environment:
+    - N8N_SKIP_RESPONSE_COMPRESSION=true  # Important pour MCP/SSE
+La magie du depends_on : n8n attend que MCP soit complètement démarré et fonctionnel.
+Le réseau Docker
+yamlnetworks:
+  demo:
+    name: chat-help_demo
+    driver: bridge
+Résolution DNS automatique : Dans le réseau demo, chaque conteneur peut appeler un autre par son hostname :
 
-## 9. Problèmes Rencontrés et Solutions
+http://chat-help-mcp:8080 → Conteneur MCP
+http://postgres:5432 → Conteneur Postgres
 
-### 9.1 Problème : "Could not connect to your MCP server"
 
-**Cause** : Incompatibilité de transport SSE (Server-Sent Events)
+🔌 Connexion à n8n {#connexion-n8n}
+Configuration du nœud MCP Client
+Dans n8n, vous avez configuré le nœud MCP Client avec :
+Endpoint: http://chat-help-mcp:8080
+Server Transport: HTTP Streamable
+Authentication: None
+Tools to Include: All
+Pourquoi cette URL fonctionne ?
 
-**Solution** : Utiliser le transport "HTTP Streamable" au lieu de "Server Sent Events (Deprecated)"
+chat-help-mcp : Hostname du conteneur MCP (résolution DNS Docker)
+:8080 : Port interne du serveur
+Pas de /stream ou /message : Le endpoint racine / gère automatiquement les requêtes JSON-RPC
 
-### 9.2 Problème : "Waiting to execute..."
+Flux de communication
+n8n Agent
+   │
+   │ 1. POST http://chat-help-mcp:8080/
+   │    {"jsonrpc":"2.0", "method":"tools/list", "id":1}
+   │
+   ▼
+chat-help-mcp (port 8080)
+   │
+   │ 2. Traitement par handle_jsonrpc()
+   │
+   ▼
+Retourne la liste des 8 outils
+   │
+   ▼
+n8n Agent voit les outils disponibles
+   │
+   │ 3. POST http://chat-help-mcp:8080/
+   │    {"jsonrpc":"2.0", "method":"tools/call", 
+   │     "params":{"name":"get_joke", "arguments":{"language":"fr"}}}
+   │
+   ▼
+Exécution de l'outil get_joke()
+   │
+   ▼
+Retourne la blague à n8n
 
-**Cause** : Le serveur ne répond pas au format attendu par n8n
+📝 Étapes que vous avez suivies {#étapes-suivies}
+Phase 1 : Création du serveur MCP
 
-**Solution** : Implémenter correctement le protocole JSON-RPC 2.0 avec les méthodes :
-- `initialize`
-- `tools/list`
-- `tools/call`
+Écrit server.py avec :
 
-### 9.3 Problème : Conteneurs ne communiquent pas
+Import des outils depuis /tools/
+Définition des 8 outils MCP
+Classe MCPHTTPServer avec routes HTTP
+Handlers JSON-RPC pour initialize, tools/list, tools/call
 
-**Cause** : Mauvaise configuration réseau Docker
 
-**Solution** : 
-- Vérifier que tous les conteneurs sont sur le même réseau `demo`
-- Utiliser les noms de conteneurs (`chat-help-mcp`) et non `localhost`
+Créé les outils dans /tools/ :
 
-```bash
+web_navigator.py : Fonction navigate_web()
+tech_watcher.py : Fonction watch_tech()
+code_expert.py : Fonction analyze_code_expert()
+learning_assistant.py : Fonctions d'apprentissage
+
+
+Configuré le Dockerfile :
+
+Base Python 3.11
+Installation des dépendances
+Exposition du port 8080
+
+
+
+Phase 2 : Configuration Docker Compose
+
+Ajouté le service chat-help-mcp :
+
+Build depuis Dockerfile
+Exposition port 8080
+Réseau demo
+Variables d'environnement
+Healthcheck avec Python urllib
+
+
+Configuré les dépendances :
+
+n8n depends_on chat-help-mcp
+Attente du statut healthy
+
+
+Ajouté les hostnames :
+
+Chaque service a un hostname pour DNS
+
+
+
+Phase 3 : Tests et debugging
+
+Test du serveur :
+
+powershell   docker-compose up -d
+   docker logs chat-help-mcp
+   Invoke-RestMethod http://localhost:8080/health
+
+Test de connectivité réseau :
+
+powershell   docker exec -it chat-help-n8n sh
+   wget http://chat-help-mcp:8080/health
+
+Configuration n8n MCP Client :
+
+URL: http://chat-help-mcp:8080
+Transport: HTTP Streamable
+
+
+
+Phase 4 : Résolution des problèmes
+
+Problème healthcheck :
+
+Initialement : wget non disponible → unhealthy
+Solution : Utiliser Python urllib.request pour le healthcheck
+
+
+Problème de résolution DNS :
+
+Ajout explicite des hostname
+Utilisation du nom de conteneur exact dans n8n
+
+
+
+
+🔧 Dépannage {#dépannage}
+Problème : Container unhealthy
+Symptôme : docker ps montre (unhealthy)
+Diagnostic :
+powershelldocker logs chat-help-mcp --tail 20
+docker inspect chat-help-mcp --format='{{json .State.Health}}'
+Solutions :
+
+Vérifier que le serveur démarre sans erreur
+Tester /health manuellement : curl localhost:8080/health
+Adapter le healthcheck selon les outils disponibles dans l'image
+
+Problème : n8n ne se connecte pas
+Symptôme : "Could not connect to your MCP server"
+Diagnostic :
+powershell# Test depuis n8n
+docker exec -it chat-help-n8n sh
+wget -qO- http://chat-help-mcp:8080/health
+
 # Vérifier le réseau
-docker network inspect self-hosted-ai-starter-kit_demo
-```
+docker network inspect chat-help_demo
+Solutions :
 
-### 9.4 Évolution du transport : SSE → HTTP Streamable
+Vérifier que les deux conteneurs sont sur le même réseau
+Utiliser le bon hostname (celui dans container_name)
+Ne pas ajouter /stream ou /message à l'URL
+Vérifier les logs n8n : docker logs chat-help-n8n
 
-| Tentative | Transport | Résultat |
-|-----------|-----------|----------|
-| 1 | SSE (format personnalisé) | ❌ n8n ne reconnaît pas les outils |
-| 2 | SSE (format MCP deprecated) | ❌ n8n affiche "waiting to execute" |
-| 3 | SSE + HTTP POST combinés | ❌ Incompatibilité de format |
-| 4 | **HTTP Streamable + JSON-RPC** | ✅ **FONCTIONNE** |
+Problème : Outils non visibles
+Symptôme : MCP connecté mais pas d'outils
+Diagnostic :
+powershell# Tester l'endpoint tools
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/" `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' `
+  -ContentType "application/json"
+Solution : Vérifier que TOOLS est bien défini et que les fonctions sont importées
 
----
+🎓 Ce que vous avez appris
 
-## 10. Monitoring et Maintenance
+Protocole MCP : Communication standardisée entre LLMs et outils
+JSON-RPC 2.0 : Format de requête/réponse pour API
+Docker Networking : Résolution DNS entre conteneurs
+Healthchecks : Vérification de santé des services
+Dépendances Docker : Ordre de démarrage avec depends_on
+CORS : Autorisation des requêtes cross-origin
+Asyncio Python : Serveur web asynchrone avec aiohttp
 
-### 10.1 Health checks
 
-```powershell
-# Vérifier l'état de tous les services
-docker-compose ps
+🚀 Pour aller plus loin
 
-# Health
+Ajouter de nouveaux outils : Créez une fonction dans /tools/ et ajoutez-la à TOOLS
+Monitorer les logs : docker logs -f chat-help-mcp
+Sécuriser : Ajouter une authentification (API key)
+Scaler : Déployer plusieurs instances derrière un load balancer
