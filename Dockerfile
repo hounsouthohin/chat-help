@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
 COPY tools/ ./tools/
-COPY config/ ./config/
 COPY data/ ./data/
 
 EXPOSE 8080
