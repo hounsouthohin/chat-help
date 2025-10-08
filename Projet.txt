@@ -1,0 +1,692 @@
+# 🏗️ Architecture Multi-MCP Servers + n8n + Ollama
+
+## 📊 Analyse de vos outils et dépendances
+
+### Outils SANS dépendances externes (Autonomes) ✅
+
+Ces outils peuvent être créés **MAINTENANT** sans attendre d'infos externes :
+
+| Outil | Dépendances | Complexité |
+|-------|-------------|-----------|
+| **snippet_library** | Fichiers JSON locaux | ⭐ Facile |
+| **meme_generator** | Fichiers images locaux | ⭐ Facile |
+| **motivation_bot** | Phrases hardcodées | ⭐ Facile |
+| **study_buddy** | Timer + Quiz hardcodés | ⭐⭐ Moyen |
+| **code_challenge** | Problèmes hardcodés | ⭐⭐ Moyen |
+| **debug_helper** | Base de connaissance locale | ⭐⭐ Moyen |
+
+**Action** : Commencez par ceux-là ce soir ! ✅
+
+---
+
+### Outils AVEC dépendances externes (Nécessitent des ressources) 🔗
+
+| Outil | Ressource externe requise | Quand disponible ? |
+|-------|--------------------------|-------------------|
+| **wiki_search** | API Wiki du département | Demain (après exploration) |
+| **course_info** | Base de données cours | À obtenir |
+| **assignment_tracker** | Système de gestion devoirs | À obtenir |
+| **resource_finder** | Sources à indexer | À créer |
+| **code_analyzer** | Linters (pylint, eslint) | Immédiat (npm install) |
+| **code_executor** | Sandbox Docker | Immédiat (Docker in Docker) |
+| **calendar_helper** | Google Calendar API / iCal | À obtenir accès |
+
+**Action** : Créez des versions "mock" (simulées) d'abord, vraies données plus tard ✅
+
+---
+
+## 🎯 Pourquoi une base de données ?
+
+### Sans base de données (OK pour MVP) ✅
+```
+- Outils autonomes (jokes, memes)
+- Données statiques (snippets)
+- Pas d'historique nécessaire
+```
+
+### Avec base de données (Nécessaire pour) 📊
+```
+✅ Historique des conversations
+✅ Tracking des devoirs (assignment_tracker)
+✅ Progression étudiant (study_buddy)
+✅ Statistiques d'utilisation
+✅ Cache des résultats
+✅ Feedback utilisateurs
+```
+
+**Ma recommandation** :
+- **Phase 1 (maintenant)** : Pas de DB, fichiers JSON
+- **Phase 2 (semaine 2-3)** : SQLite simple
+- **Phase 3 (production)** : PostgreSQL si vraiment nécessaire
+
+---
+
+## 🏗️ Architecture recommandée : Multi-MCP Servers
+
+### Structure proposée
+
+```
+tech-assistant-mcp/
+├── docker-compose.yml (MASTER)
+├── registry.yaml
+│
+├── mcp-servers/
+│   ├── 1-autonomous-tools/      # Outils sans dépendances
+│   │   ├── Dockerfile
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── snippet-library.ts
+│   │   │   ├── meme-generator.ts
+│   │   │   ├── motivation-bot.ts
+│   │   │   └── study-buddy.ts
+│   │   └── catalog.yaml
+│   │
+│   ├── 2-code-tools/            # Outils de code
+│   │   ├── Dockerfile
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── code-analyzer.ts
+│   │   │   ├── code-executor.ts
+│   │   │   ├── debug-helper.ts
+│   │   │   └── code-challenge.ts
+│   │   └── catalog.yaml
+│   │
+│   ├── 3-academic-tools/        # Outils académiques (avec dépendances)
+│   │   ├── Dockerfile
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── wiki-search.ts
+│   │   │   ├── course-info.ts
+│   │   │   ├── assignment-tracker.ts
+│   │   │   └── calendar-helper.ts
+│   │   ├── catalog.yaml
+│   │   └── .env.example         # Pour les clés API
+│   │
+│   └── 4-resource-tools/        # Outils de ressources
+│       ├── Dockerfile
+│       ├── src/
+│       │   ├── index.ts
+│       │   └── resource-finder.ts
+│       └── catalog.yaml
+│
+├── n8n-integration/             # Workflows n8n
+│   └── workflows/
+│       ├── chat-workflow.json
+│       ├── monitoring.json
+│       └── notifications.json
+│
+└── data/                        # Données locales
+    ├── snippets/
+    ├── memes/
+    ├── challenges/
+    └── mock-data/               # Données simulées
+```
+
+---
+
+## 🐳 Docker Compose Master (tous les MCP + n8n)
+
+```yaml
+version: '3.8'
+
+services:
+  # ==========================================
+  # MCP SERVERS
+  # ==========================================
+  
+  mcp-autonomous:
+    build:
+      context: ./mcp-servers/1-autonomous-tools
+      dockerfile: Dockerfile
+    container_name: mcp-autonomous
+    volumes:
+      - ./data/snippets:/app/data/snippets:ro
+      - ./data/memes:/app/data/memes:ro
+      - C:\Users\HP PAVILION\.docker\mcp\registry.yaml:/mcp/registry.yaml:ro
+      - C:\Users\HP PAVILION\.docker\mcp\catalogs:/mcp/catalogs:ro
+    environment:
+      - NODE_ENV=production
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  mcp-code-tools:
+    build:
+      context: ./mcp-servers/2-code-tools
+      dockerfile: Dockerfile
+    container_name: mcp-code-tools
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Pour code executor
+      - C:\Users\HP PAVILION\.docker\mcp\registry.yaml:/mcp/registry.yaml:ro
+      - C:\Users\HP PAVILION\.docker\mcp\catalogs:/mcp/catalogs:ro
+    environment:
+      - NODE_ENV=production
+    privileged: true  # Pour Docker in Docker
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  mcp-academic:
+    build:
+      context: ./mcp-servers/3-academic-tools
+      dockerfile: Dockerfile
+    container_name: mcp-academic
+    volumes:
+      - C:\Users\HP PAVILION\.docker\mcp\registry.yaml:/mcp/registry.yaml:ro
+      - C:\Users\HP PAVILION\.docker\mcp\catalogs:/mcp/catalogs:ro
+      - ./data/mock-data:/app/data/mock:ro  # Données simulées
+    environment:
+      - NODE_ENV=production
+      - WIKI_API_URL=${WIKI_API_URL:-http://mock}
+      - CALENDAR_API_KEY=${CALENDAR_API_KEY:-mock}
+    env_file:
+      - ./mcp-servers/3-academic-tools/.env
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  mcp-resources:
+    build:
+      context: ./mcp-servers/4-resource-tools
+      dockerfile: Dockerfile
+    container_name: mcp-resources
+    volumes:
+      - C:\Users\HP PAVILION\.docker\mcp\registry.yaml:/mcp/registry.yaml:ro
+      - C:\Users\HP PAVILION\.docker\mcp\catalogs:/mcp/catalogs:ro
+    environment:
+      - NODE_ENV=production
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  # ==========================================
+  # N8N + OLLAMA (depuis votre starter kit)
+  # ==========================================
+  
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=America/New_York
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n-integration/workflows:/workflows
+    depends_on:
+      - postgres
+      - ollama
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: n8n
+      POSTGRES_DB: n8n
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  ollama_data:
+  n8n_data:
+  postgres_data:
+  qdrant_data:
+```
+
+---
+
+## 📝 Registry.yaml (référencer tous les MCP)
+
+```yaml
+# C:\Users\HP PAVILION\.docker\mcp\registry.yaml
+version: "1.0"
+catalogs:
+  - name: autonomous-tools
+    path: /mcp/catalogs/autonomous-catalog.yaml
+    description: "Outils autonomes (snippets, memes, motivation)"
+    enabled: true
+    
+  - name: code-tools
+    path: /mcp/catalogs/code-catalog.yaml
+    description: "Outils de développement (analyzer, executor)"
+    enabled: true
+    
+  - name: academic-tools
+    path: /mcp/catalogs/academic-catalog.yaml
+    description: "Outils académiques (wiki, cours, devoirs)"
+    enabled: true
+    
+  - name: resource-tools
+    path: /mcp/catalogs/resource-catalog.yaml
+    description: "Recherche de ressources pédagogiques"
+    enabled: true
+```
+
+---
+
+## 🔌 Connexion MCP ↔ n8n
+
+### Option 1 : Via HTTP (Recommandé)
+
+Créez une API wrapper pour vos MCP :
+
+```typescript
+// api-gateway/src/index.ts
+import express from 'express';
+import { execMCP } from './mcp-client';
+
+const app = express();
+app.use(express.json());
+
+// Endpoint pour n8n
+app.post('/mcp/execute', async (req, res) => {
+    const { server, tool, args } = req.body;
+    
+    try {
+        const result = await execMCP(server, tool, args);
+        res.json({ success: true, result });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.listen(3000, () => {
+    console.log('MCP Gateway API listening on :3000');
+});
+```
+
+Ajoutez au docker-compose :
+
+```yaml
+  mcp-gateway-api:
+    build:
+      context: ./api-gateway
+    container_name: mcp-gateway-api
+    ports:
+      - "3000:3000"
+    environment:
+      - MCP_SERVERS=mcp-autonomous,mcp-code-tools,mcp-academic,mcp-resources
+    networks:
+      - mcp-network
+    depends_on:
+      - mcp-autonomous
+      - mcp-code-tools
+      - mcp-academic
+      - mcp-resources
+```
+
+### Option 2 : n8n Custom Node (Avancé)
+
+Créez un node n8n personnalisé pour MCP :
+
+```typescript
+// n8n-nodes-mcp/nodes/MCPTool/MCPTool.node.ts
+import { IExecuteFunctions } from 'n8n-core';
+import { INodeExecutionData, INodeType, INodeTypeDescription } from 'n8n-workflow';
+import axios from 'axios';
+
+export class MCPTool implements INodeType {
+    description: INodeTypeDescription = {
+        displayName: 'MCP Tool',
+        name: 'mcpTool',
+        group: ['transform'],
+        version: 1,
+        description: 'Execute MCP Server tools',
+        defaults: {
+            name: 'MCP Tool',
+        },
+        inputs: ['main'],
+        outputs: ['main'],
+        properties: [
+            {
+                displayName: 'Server',
+                name: 'server',
+                type: 'options',
+                options: [
+                    { name: 'Autonomous Tools', value: 'autonomous' },
+                    { name: 'Code Tools', value: 'code' },
+                    { name: 'Academic Tools', value: 'academic' },
+                    { name: 'Resource Tools', value: 'resources' },
+                ],
+                default: 'autonomous',
+            },
+            {
+                displayName: 'Tool',
+                name: 'tool',
+                type: 'string',
+                default: '',
+            },
+            {
+                displayName: 'Arguments',
+                name: 'args',
+                type: 'json',
+                default: '{}',
+            },
+        ],
+    };
+
+    async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+        const items = this.getInputData();
+        const returnData: INodeExecutionData[] = [];
+
+        for (let i = 0; i < items.length; i++) {
+            const server = this.getNodeParameter('server', i) as string;
+            const tool = this.getNodeParameter('tool', i) as string;
+            const args = this.getNodeParameter('args', i) as object;
+
+            const response = await axios.post('http://mcp-gateway-api:3000/mcp/execute', {
+                server,
+                tool,
+                args,
+            });
+
+            returnData.push({ json: response.data });
+        }
+
+        return [returnData];
+    }
+}
+```
+
+---
+
+## 🎬 Workflow n8n exemple
+
+```json
+{
+  "name": "Student Question Handler",
+  "nodes": [
+    {
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 300],
+      "parameters": {
+        "path": "student-question",
+        "method": "POST"
+      }
+    },
+    {
+      "name": "Detect Intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [450, 300],
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "bodyParametersJson": "={{ JSON.stringify({\n  model: 'llama3.2',\n  prompt: 'Classify this question: ' + $json.question\n}) }}"
+      }
+    },
+    {
+      "name": "Router",
+      "type": "n8n-nodes-base.switch",
+      "position": [650, 300],
+      "parameters": {
+        "rules": [
+          { "name": "Code Question", "value": "={{ $json.intent === 'code' }}" },
+          { "name": "Course Question", "value": "={{ $json.intent === 'course' }}" },
+          { "name": "General", "value": "={{ $json.intent === 'general' }}" }
+        ]
+      }
+    },
+    {
+      "name": "Call Code Tools",
+      "type": "mcpTool",
+      "position": [850, 200],
+      "parameters": {
+        "server": "code",
+        "tool": "code_analyzer",
+        "args": "={{ $json.code }}"
+      }
+    },
+    {
+      "name": "Call Academic Tools",
+      "type": "mcpTool",
+      "position": [850, 300],
+      "parameters": {
+        "server": "academic",
+        "tool": "wiki_search",
+        "args": "={{ { query: $json.question } }}"
+      }
+    },
+    {
+      "name": "Generate Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 300],
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "bodyParametersJson": "={{ JSON.stringify({\n  model: 'llama3.2',\n  prompt: 'Context: ' + $json.result + '\\n\\nQuestion: ' + $('Webhook').item.json.question\n}) }}"
+      }
+    },
+    {
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1250, 300],
+      "parameters": {
+        "response": "={{ $json.response }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Detect Intent", "type": "main", "index": 0 }]] },
+    "Detect Intent": { "main": [[{ "node": "Router", "type": "main", "index": 0 }]] },
+    "Router": {
+      "main": [
+        [{ "node": "Call Code Tools", "type": "main", "index": 0 }],
+        [{ "node": "Call Academic Tools", "type": "main", "index": 0 }],
+        [{ "node": "Generate Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call Code Tools": { "main": [[{ "node": "Generate Response", "type": "main", "index": 0 }]] },
+    "Call Academic Tools": { "main": [[{ "node": "Generate Response", "type": "main", "index": 0 }]] },
+    "Generate Response": { "main": [[{ "node": "Send Response", "type": "main", "index": 0 }]] }
+  }
+}
+```
+
+---
+
+## 🚀 Plan d'action CE SOIR (4 heures)
+
+### Phase 1 : Restructurer le projet (30 min)
+
+```bash
+cd tech-assistant-mcp
+
+# Créer la nouvelle structure
+mkdir -p mcp-servers/{1-autonomous-tools,2-code-tools,3-academic-tools,4-resource-tools}/src
+mkdir -p n8n-integration/workflows
+mkdir -p data/{snippets,memes,challenges,mock-data}
+mkdir -p api-gateway/src
+
+# Copier votre serveur existant comme base
+cp -r src mcp-servers/1-autonomous-tools/
+cp package.json mcp-servers/1-autonomous-tools/
+cp tsconfig.json mcp-servers/1-autonomous-tools/
+cp Dockerfile mcp-servers/1-autonomous-tools/
+```
+
+### Phase 2 : MCP Autonomous Tools (2h30)
+
+```bash
+cd mcp-servers/1-autonomous-tools
+
+# Implémenter les 4 outils autonomes
+# snippet_library.ts
+# meme_generator.ts  
+# motivation_bot.ts
+# study_buddy.ts
+
+npm install
+npm run build
+```
+
+### Phase 3 : Tester avec Claude Desktop (30 min)
+
+```bash
+# Mettre à jour le registry
+# Rebuild docker
+docker-compose build mcp-autonomous
+docker-compose up -d mcp-autonomous
+
+# Tester dans Claude Desktop
+```
+
+### Phase 4 : Documenter (30 min)
+
+```bash
+# Créer README pour chaque serveur
+# Noter ce qui fonctionne
+# Lister les dépendances manquantes
+```
+
+---
+
+## 📊 Priorités et Timeline
+
+### Ce soir (23h-3h) - 4h
+- ✅ Restructurer projet
+- ✅ MCP Autonomous Tools (4 outils)
+- ✅ Tests Claude Desktop
+
+### Demain soir - 3h
+- ✅ Explorer wiki département
+- ✅ MCP Code Tools (commencer)
+- ✅ Créer données mock pour academic tools
+
+### Jour 3-4 - 6h
+- ✅ MCP Code Tools complet
+- ✅ MCP Academic Tools (version mock)
+- ✅ API Gateway basique
+
+### Jour 5-7 - 8h
+- ✅ Intégration n8n
+- ✅ Workflow de base
+- ✅ Tests end-to-end
+
+### Semaine 2
+- ✅ Remplacer mocks par vraies données
+- ✅ Interface web simple
+- ✅ Déploiement
+
+---
+
+## 🎯 Réponse à votre configuration Claude Desktop
+
+Votre config actuelle est **parfaite** ! Pour ajouter les nouveaux serveurs MCP :
+
+```json
+{
+  "mcpServers": {
+    "autonomous-tools": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "C:\\Users\\HP PAVILION\\.docker\\mcp\\registry.yaml:/mcp/registry.yaml:ro",
+        "-v", "C:\\Users\\HP PAVILION\\.docker\\mcp\\catalogs:/mcp/catalogs:ro",
+        "mcp-autonomous"
+      ]
+    },
+    "code-tools": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "C:\\Users\\HP PAVILION\\.docker\\mcp\\registry.yaml:/mcp/registry.yaml:ro",
+        "-v", "C:\\Users\\HP PAVILION\\.docker\\mcp\\catalogs:/mcp/catalogs:ro",
+        "-v", "/var/run/docker.sock:/var/run/docker.sock",
+        "--privileged",
+        "mcp-code-tools"
+      ]
+    },
+    "academic-tools": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "C:\\Users\\HP PAVILION\\.docker\\mcp\\registry.yaml:/mcp/registry.yaml:ro",
+        "-v", "C:\\Users\\HP PAVILION\\.docker\\mcp\\catalogs:/mcp/catalogs:ro",
+        "mcp-academic"
+      ]
+    }
+  }
+}
+```
+
+---
+
+## 💡 Mes suggestions finales
+
+### 1. **Commencez SIMPLE ce soir**
+Créez juste le serveur `autonomous-tools` avec 4 outils. C'est faisable en 4h.
+
+### 2. **Données mock d'abord**
+Pour `academic-tools`, créez des fichiers JSON avec des données fictives :
+```json
+// data/mock-data/courses.json
+{
+  "Python 101": {
+    "schedule": "Lundi 9h-11h",
+    "professor": "Dr. Smith",
+    "room": "A-301"
+  }
+}
+```
+
+### 3. **n8n en Phase 2**
+Concentrez-vous sur les MCP cette semaine. n8n la semaine prochaine quand tout est stable.
+
+### 4. **API Gateway = clé**
+C'est le pont entre n8n et vos MCP. Priorité semaine 2.
+
+### 5. **Documentation continue**
+Documentez TOUT au fur et à mesure. Vous oublierez sinon.
+
+---
+
+## ❓ Questions critiques à résoudre demain
+
+1. **Wiki** : Quel CMS ? (MediaWiki, Confluence, custom ?)
+2. **Cours** : Où sont les données académiques ?
+3. **Devoirs** : Système existant ou à créer ?
+4. **Calendrier** : Google Calendar ou autre ?
+
+---
+
+**Prêt à commencer ? Commencez par créer `snippet-library.ts` ce soir ! C'est le plus simple. 🚀**
+
+Besoin du code de démarrage pour les outils autonomes ?

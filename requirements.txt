@@ -1,8 +1,19 @@
-# MCP Server
-mcp>=0.9.0
+# MCP SDK
+mcp>=1.0.0
 
-# Async HTTP client
+# Web Framework pour mode HTTP
 aiohttp>=3.9.0
+
+
+
+# Code Analysis
+pylint>=3.0.0
+radon>=6.0.1
+autopep8>=2.0.4
+
+# Data Processing
+pydantic>=2.5.0
 
 # Utilities
 python-dotenv>=1.0.0
+colorama>=0.4.6
