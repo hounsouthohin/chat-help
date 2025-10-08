@@ -1,0 +1,24 @@
+# searxng/settings.yml
+use_default_settings: true
+
+server:
+  secret_key: "votre-secret-key-random"
+  limiter: false
+  image_proxy: true
+
+search:
+  safe_search: 0
+  autocomplete: "google"
+  default_lang: "fr"
+  
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: github
+    disabled: false
+  - name: stackoverflow
+    disabled: false
