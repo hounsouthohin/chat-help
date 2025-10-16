@@ -1,10 +1,10 @@
 services:
-  # === MCP SERVER HTTP (pour n8n) ===
+  # === MCP SERVER ===
   chat-help-mcp:
     build: .
     image: chat-help-mcp
     container_name: chat-help-mcp
-    hostname: chat-help-mcp  # ← AJOUT pour meilleure résolution DNS
+    hostname: chat-help-mcp
     networks:
       - demo
     restart: unless-stopped
@@ -18,8 +18,8 @@ services:
       - MCP_PORT=8080
       - SEARXNG_URL=http://searxng:8080
       - MINIFLUX_URL=http://miniflux:8080
-    command: python server.py  # ← SUPPRESSION du --http (mode par défaut)
-    healthcheck:  # ← AJOUT (utilise curl ou python)
+    command: python server.py
+    healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1"]
       interval: 10s
       timeout: 5s
@@ -30,27 +30,47 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: chat-help-postgres
-    hostname: postgres  # ← AJOUT
+    hostname: postgres
     networks:
       - demo
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-n8n}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-n8n}
-      - POSTGRES_DB=${POSTGRES_DB:-n8n}
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=n8n
     volumes:
       - postgres_storage:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-n8n}']
+      test: ['CMD-SHELL', 'pg_isready -U root']
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # === OLLAMA (version simple) ===
+# === OLLAMA (version corrigée) ===
+  ollama:
+    image: ollama/ollama:latest
+    container_name: chat-help-ollama
+    hostname: ollama
+    networks:
+      - demo
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # === N8N ===
   n8n:
     image: n8nio/n8n:latest
     container_name: chat-help-n8n
-    hostname: n8n  # ← AJOUT
+    hostname: n8n
     networks:
       - demo
     restart: unless-stopped
@@ -61,26 +81,30 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      chat-help-mcp:  # ← AJOUT dépendance vers MCP
+      chat-help-mcp:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     environment:
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-n8n}
-      - DB_POSTGRESDB_USER=${POSTGRES_USER:-n8n}
-      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-n8n}
-      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-somekey}
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=root
+      - DB_POSTGRESDB_PASSWORD=password
+      - N8N_ENCRYPTION_KEY=super-secret-key
+      - N8N_USER_MANAGEMENT_JWT_SECRET=even-more-secret
       - OLLAMA_HOST=ollama:11434
-      # Optimisations pour MCP/SSE
       - N8N_SKIP_RESPONSE_COMPRESSION=true
       - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
 
   # === AUTRES SERVICES ===
   qdrant:
     image: qdrant/qdrant
     container_name: chat-help-qdrant
-    hostname: qdrant  # ← AJOUT
+    hostname: qdrant
     networks:
       - demo
     restart: unless-stopped
@@ -89,22 +113,10 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: chat-help-ollama
-    hostname: ollama  # ← AJOUT
-    networks:
-      - demo
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_storage:/root/.ollama
-
   searxng:
     image: searxng/searxng:latest
     container_name: chat-help-searxng
-    hostname: searxng  # ← AJOUT
+    hostname: searxng
     networks:
       - demo
     restart: unless-stopped
@@ -116,7 +128,7 @@ services:
   miniflux-db:
     image: postgres:15-alpine
     container_name: chat-help-miniflux-db
-    hostname: miniflux-db  # ← AJOUT
+    hostname: miniflux-db
     networks:
       - demo
     restart: unless-stopped
@@ -130,7 +142,7 @@ services:
   miniflux:
     image: miniflux/miniflux:latest
     container_name: chat-help-miniflux
-    hostname: miniflux  # ← AJOUT
+    hostname: miniflux
     networks:
       - demo
     restart: unless-stopped
@@ -155,4 +167,4 @@ volumes:
 networks:
   demo:
     name: chat-help_demo
-    driver: bridge  # ← AJOUT explicite
+    driver: bridge
