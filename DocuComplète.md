@@ -1,364 +1,427 @@
-Tutorial Complet : Connecter un Serveur MCP à n8n via Docker
-📚 Table des matières
-
-Vue d'ensemble du projet
-Architecture du système
-Composants du serveur MCP
-Configuration Docker
-Connexion à n8n
-Étapes que vous avez suivies
-Dépannage
-
-
-🎯 Vue d'ensemble du projet {#vue-densemble}
+📚 Documentation Complète : Projet Chat-Help avec Wiki Next.js
+🎯 Vue d'ensemble du projet
 Qu'est-ce qu'on a construit ?
-Vous avez créé un serveur MCP (Model Context Protocol) qui expose des outils d'assistance (veille technologique, navigation web, apprentissage, etc.) que n8n peut utiliser dans ses workflows d'automatisation.
-MCP = Model Context Protocol : Un protocole qui permet aux LLMs (comme les agents n8n) d'utiliser des outils externes de manière standardisée.
-Schéma de l'architecture
-┌─────────────────────────────────────────────────┐
-│              Docker Network (demo)              │
-│                                                 │
-│  ┌──────────────┐         ┌─────────────────┐  │
-│  │     n8n      │ ◄─────► │  chat-help-mcp  │  │
-│  │  (Port 5678) │  HTTP   │   (Port 8080)   │  │
-│  └──────────────┘         └─────────────────┘  │
-│         │                          │            │
-│         │                    ┌─────▼─────┐      │
-│    ┌────▼────┐              │  8 Outils  │      │
-│    │Postgres │              │ MCP Tools  │      │
-│    └─────────┘              └────────────┘      │
-│                                                 │
-└─────────────────────────────────────────────────┘
-         ▲
-         │ Utilisateur accède via http://localhost:5678
+Un écosystème complet d'assistant IA comprenant :
 
-🏗️ Architecture du système {#architecture}
-Les 3 couches principales
-
-Couche Réseau (Docker) : Tous les conteneurs communiquent via le réseau demo
-Couche Application (MCP Server) : Serveur Python qui expose les outils via HTTP
-Couche Client (n8n) : Consomme les outils MCP dans ses workflows
+MCP Server : Serveur Python exposant des outils (navigation web, veille techno, etc.)
+n8n Workflow : Orchestrateur qui coordonne l'AI Agent, Ollama et les outils MCP
+Wiki Next.js : Interface utilisateur pour interagir avec le chatbot
 
 
-🛠️ Composants du serveur MCP {#composants-mcp}
-1. Le fichier server.py
-C'est le cœur de votre serveur MCP. Voici comment il fonctionne :
-a) Import et configuration
-pythonfrom aiohttp import web  # Serveur web asynchrone
-import asyncio
-import json
-import logging
+🏗️ Architecture globale
+┌─────────────────────────────────────────────────────────┐
+│              Machine Hôte (Windows)                     │
+│                                                         │
+│  Wiki Next.js (localhost:3000)                         │
+│       │                                                 │
+│       │ HTTP POST /api/chatbot                         │
+│       ↓                                                 │
+│  ┌────────────────────────────────────────────────┐    │
+│  │         Docker Network (demo)                  │    │
+│  │                                                │    │
+│  │  n8n (localhost:5678) ← Port exposé           │    │
+│  │     │                                          │    │
+│  │     ├─► AI Agent                               │    │
+│  │     │   ├─► Ollama (llama2)                    │    │
+│  │     │   ├─► Postgres Memory                    │    │
+│  │     │   └─► MCP Client                         │    │
+│  │     │       └─► MCP Server (port 8080)         │    │
+│  │     │           └─► 8 Outils                   │    │
+│  │     │                                          │    │
+│  │     └─► Response → Wiki                        │    │
+│  └────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
 
-# Configuration des logs
-LOG_FILE = "/app/data/mcp_server.log"
-logging.basicConfig(level=logging.INFO)
-Pourquoi aiohttp ? : Parce qu'on a besoin d'un serveur web asynchrone pour gérer plusieurs requêtes simultanées efficacement.
-b) Définition des outils
-pythonTOOLS = [
-    {
-        "name": "navigate_web",
-        "description": "🌐 Navigateur web intelligent",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                # ... autres paramètres
-            },
-            "required": ["query"]
-        }
-    },
-    # ... 7 autres outils
-]
-Format MCP : Chaque outil est décrit avec :
+📦 Partie 1 : Infrastructure Docker
+Configuration docker-compose.yml (éléments clés)
+yamlservices:
+  # MCP Server
+  chat-help-mcp:
+    build: .
+    container_name: chat-help-mcp
+    hostname: chat-help-mcp
+    networks:
+      - demo
+    ports:
+      - "8080:8080"  # Exposé pour tests externes
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8080
 
-name : Identifiant unique
-description : Ce que fait l'outil
-inputSchema : Schéma JSON des paramètres attendus
+  # n8n
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: chat-help-n8n
+    hostname: n8n
+    networks:
+      - demo
+    ports:
+      - "5678:5678"  # ⚠️ CRITIQUE : Port pour Next.js
+    depends_on:
+      chat-help-mcp:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=ollama:11434
 
-c) La classe MCPHTTPServer
-pythonclass MCPHTTPServer:
-    def __init__(self):
-        self.app = web.Application()
-        self.setup_cors()      # Configure CORS pour autoriser n8n
-        self.setup_routes()    # Définit les endpoints HTTP
-Rôle : Gère les requêtes HTTP et les traduit en appels d'outils MCP.
-d) Les endpoints clés
-EndpointMéthodeRôle/POSTPrincipal - Reçoit les requêtes JSON-RPC de n8n/healthGETVérification que le serveur fonctionne/toolsGETListe tous les outils disponibles/initializePOSTInitialisation de la connexion MCP
-e) Le protocole JSON-RPC 2.0
-Votre serveur communique avec n8n via JSON-RPC 2.0 :
-Requête d'initialisation :
-json{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2024-11-05"
-  }
-}
-Réponse :
-json{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {"tools": {}},
-    "serverInfo": {
-      "name": "chat-help",
-      "version": "2.0.0"
-    }
-  }
-}
+  # Ollama
+  ollama:
+    image: ollama/ollama:latest
+    container_name: chat-help-ollama
+    networks:
+      - demo
+    ports:
+      - "11434:11434"
 
-🐳 Configuration Docker {#configuration-docker}
-1. Le Dockerfile (votre container)
-Structure typique :
-dockerfileFROM python:3.11-slim
-
-WORKDIR /app
-
-# Installation des dépendances
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copie du code
-COPY . .
-
-# Port exposé
-EXPOSE 8080
-
-# Commande de démarrage
-CMD ["python", "server.py"]
-Ce qui se passe :
-
-Part d'une image Python légère
-Installe les dépendances (aiohttp, etc.)
-Copie votre code
-Expose le port 8080
-Lance server.py au démarrage
-
-2. Le docker-compose.yaml
-Service chat-help-mcp
-yamlchat-help-mcp:
-  build: .                        # Construit l'image depuis le Dockerfile
-  container_name: chat-help-mcp   # Nom du conteneur
-  hostname: chat-help-mcp         # Nom DNS dans le réseau Docker
-  networks:
-    - demo                        # Réseau partagé avec n8n
-  ports:
-    - "8080:8080"                 # Port externe:interne
-  environment:
-    - MCP_HOST=0.0.0.0           # Écoute sur toutes les interfaces
-    - MCP_PORT=8080               # Port interne
-  command: python server.py       # Commande de démarrage
-  healthcheck:                    # Vérification de santé
-    test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")'"]
-    interval: 10s                 # Teste toutes les 10s
-    retries: 5                    # 5 tentatives max
-    start_period: 15s             # Attendre 15s avant le premier test
-Pourquoi le healthcheck ? : Pour que n8n attende que le serveur MCP soit vraiment prêt avant de démarrer.
-Service n8n
-yamln8n:
-  image: n8nio/n8n:latest
-  container_name: chat-help-n8n
-  hostname: n8n
-  networks:
-    - demo                        # Même réseau que MCP
-  depends_on:
-    postgres:
-      condition: service_healthy
-    chat-help-mcp:
-      condition: service_healthy  # Attend que MCP soit healthy
-  environment:
-    - N8N_SKIP_RESPONSE_COMPRESSION=true  # Important pour MCP/SSE
-La magie du depends_on : n8n attend que MCP soit complètement démarré et fonctionnel.
-Le réseau Docker
-yamlnetworks:
+networks:
   demo:
     name: chat-help_demo
     driver: bridge
-Résolution DNS automatique : Dans le réseau demo, chaque conteneur peut appeler un autre par son hostname :
+Points essentiels :
 
-http://chat-help-mcp:8080 → Conteneur MCP
-http://postgres:5432 → Conteneur Postgres
+Port 5678 de n8n DOIT être exposé pour Next.js
+Tous les services dans le même réseau demo
+MCP et Ollama doivent être healthy avant n8n
 
+Démarrage
+powershellcd M:\chat-help
+docker-compose up -d
 
-🔌 Connexion à n8n {#connexion-n8n}
-Configuration du nœud MCP Client
-Dans n8n, vous avez configuré le nœud MCP Client avec :
-Endpoint: http://chat-help-mcp:8080
-Server Transport: HTTP Streamable
-Authentication: None
-Tools to Include: All
-Pourquoi cette URL fonctionne ?
+# Vérifier
+docker ps
+docker logs chat-help-n8n --tail 20
 
-chat-help-mcp : Hostname du conteneur MCP (résolution DNS Docker)
-:8080 : Port interne du serveur
-Pas de /stream ou /message : Le endpoint racine / gère automatiquement les requêtes JSON-RPC
+🔌 Partie 2 : Connexion MCP ↔ n8n
+2.1 Configuration du MCP Server (CORS + HTTP)
+Le serveur MCP expose plusieurs endpoints :
+python# server.py (extraits essentiels)
+class MCPHTTPServer:
+    def setup_cors(self):
+        # Autorise n8n à communiquer
+        self.app.middlewares.append(self.cors_middleware)
+    
+    def setup_routes(self):
+        self.app.router.add_post('/', self.handle_jsonrpc)
+        self.app.router.add_get('/health', self.health)
+        self.app.router.add_get('/tools', self.list_tools)
+Endpoints disponibles :
 
-Flux de communication
-n8n Agent
-   │
-   │ 1. POST http://chat-help-mcp:8080/
-   │    {"jsonrpc":"2.0", "method":"tools/list", "id":1}
-   │
-   ▼
-chat-help-mcp (port 8080)
-   │
-   │ 2. Traitement par handle_jsonrpc()
-   │
-   ▼
-Retourne la liste des 8 outils
-   │
-   ▼
-n8n Agent voit les outils disponibles
-   │
-   │ 3. POST http://chat-help-mcp:8080/
-   │    {"jsonrpc":"2.0", "method":"tools/call", 
-   │     "params":{"name":"get_joke", "arguments":{"language":"fr"}}}
-   │
-   ▼
-Exécution de l'outil get_joke()
-   │
-   ▼
-Retourne la blague à n8n
+POST / : Endpoint principal (JSON-RPC 2.0)
+GET /health : Vérification de santé
+GET /tools : Liste des outils
 
-📝 Étapes que vous avez suivies {#étapes-suivies}
-Phase 1 : Création du serveur MCP
+2.2 Configuration n8n → MCP Client
+Dans le workflow n8n, nœud MCP Client :
+yamlNode: MCP Client (dans AI Agent)
+Type: @n8n/n8n-nodes-langchain.toolMcp
 
-Écrit server.py avec :
+Configuration:
+  Endpoint: http://chat-help-mcp:8080
+  Server Transport: HTTP Streamable
+  Authentication: None
+  Tools to Include: All
+Pourquoi ça fonctionne :
 
-Import des outils depuis /tools/
-Définition des 8 outils MCP
-Classe MCPHTTPServer avec routes HTTP
-Handlers JSON-RPC pour initialize, tools/list, tools/call
+HTTP Streamable : Protocole pour communication temps-réel via Server-Sent Events (SSE)
+hostname chat-help-mcp : Résolution DNS automatique dans le réseau Docker
+CORS configuré : Le MCP Server autorise les requêtes depuis n8n
 
+Protocole de communication (JSON-RPC 2.0) :
+javascript// n8n appelle le MCP
+POST http://chat-help-mcp:8080/
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "id": 1
+}
 
-Créé les outils dans /tools/ :
+// MCP répond
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      { "name": "navigate_web", "description": "..." },
+      { "name": "watch_tech", "description": "..." },
+      // ... 6 autres outils
+    ]
+  }
+}
+```
 
-web_navigator.py : Fonction navigate_web()
-tech_watcher.py : Fonction watch_tech()
-code_expert.py : Fonction analyze_code_expert()
-learning_assistant.py : Fonctions d'apprentissage
+---
 
+## ⚙️ Partie 3 : Configuration du Workflow n8n
 
-Configuré le Dockerfile :
+### 3.1 Structure du workflow
+```
+Webhook → Extract Data → AI Agent → Format Response
+          (Code)          │          (Code)
+                          ├─► Ollama Chat Model
+                          ├─► Postgres Memory
+                          └─► MCP Client
+3.2 Nœud 1 : Webhook
+yamlHTTP Method: POST
+Path: chatbot
+Response Mode: lastNode
+URL générée : http://localhost:5678/webhook/chatbot
+3.3 Nœud 2 : Extract Data (Code)
+javascriptconst body = $input.first().json.body || $input.first().json;
 
-Base Python 3.11
-Installation des dépendances
-Exposition du port 8080
-
-
-
-Phase 2 : Configuration Docker Compose
-
-Ajouté le service chat-help-mcp :
-
-Build depuis Dockerfile
-Exposition port 8080
-Réseau demo
-Variables d'environnement
-Healthcheck avec Python urllib
-
-
-Configuré les dépendances :
-
-n8n depends_on chat-help-mcp
-Attente du statut healthy
-
-
-Ajouté les hostnames :
-
-Chaque service a un hostname pour DNS
-
-
-
-Phase 3 : Tests et debugging
-
-Test du serveur :
-
-powershell   docker-compose up -d
-   docker logs chat-help-mcp
-   Invoke-RestMethod http://localhost:8080/health
-
-Test de connectivité réseau :
-
-powershell   docker exec -it chat-help-n8n sh
-   wget http://chat-help-mcp:8080/health
-
-Configuration n8n MCP Client :
-
-URL: http://chat-help-mcp:8080
+return {
+  json: {
+    chatInput: body.message || "Bonjour",
+    sessionId: body.sessionId || `session_${Date.now()}`,
+    userId: body.userId || "anonymous"
+  }
+};
+3.4 Nœud 3 : AI Agent (Configuration)
+Paramètres principaux :
+yamlText: ={{ $json.chatInput }}
+Sous-nœuds essentiels :
+A. Ollama Chat Model
+yamlBase URL: http://ollama:11434
+Model: llama2
+B. Postgres Chat Memory
+yamlSession ID: ={{ $json.sessionId }}
+Table Name: chat_memory
+Connection: postgres (DB n8n)
+C. MCP Client
+yamlEndpoint: http://chat-help-mcp:8080
 Transport: HTTP Streamable
+Tools: All
+3.5 Nœud 4 : Format Response (Code)
+javascriptconst response = $input.first().json;
+const extractData = $('Extract Data').first().json;
 
-
-
-Phase 4 : Résolution des problèmes
-
-Problème healthcheck :
-
-Initialement : wget non disponible → unhealthy
-Solution : Utiliser Python urllib.request pour le healthcheck
-
-
-Problème de résolution DNS :
-
-Ajout explicite des hostname
-Utilisation du nom de conteneur exact dans n8n
-
-
-
-
-🔧 Dépannage {#dépannage}
-Problème : Container unhealthy
-Symptôme : docker ps montre (unhealthy)
-Diagnostic :
-powershelldocker logs chat-help-mcp --tail 20
-docker inspect chat-help-mcp --format='{{json .State.Health}}'
-Solutions :
-
-Vérifier que le serveur démarre sans erreur
-Tester /health manuellement : curl localhost:8080/health
-Adapter le healthcheck selon les outils disponibles dans l'image
-
-Problème : n8n ne se connecte pas
-Symptôme : "Could not connect to your MCP server"
-Diagnostic :
-powershell# Test depuis n8n
-docker exec -it chat-help-n8n sh
-wget -qO- http://chat-help-mcp:8080/health
-
-# Vérifier le réseau
-docker network inspect chat-help_demo
-Solutions :
-
-Vérifier que les deux conteneurs sont sur le même réseau
-Utiliser le bon hostname (celui dans container_name)
-Ne pas ajouter /stream ou /message à l'URL
-Vérifier les logs n8n : docker logs chat-help-n8n
-
-Problème : Outils non visibles
-Symptôme : MCP connecté mais pas d'outils
-Diagnostic :
-powershell# Tester l'endpoint tools
-Invoke-RestMethod -Method Post -Uri "http://localhost:8080/" `
-  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' `
+return {
+  json: {
+    output: response.output || "Pas de réponse",
+    userId: extractData.userId,
+    sessionId: extractData.sessionId,
+    timestamp: new Date().toISOString()
+  }
+};
+3.6 Activation
+⚠️ ÉTAPE CRITIQUE : Activer le workflow avec le toggle en haut à droite
+Test du workflow :
+powershellInvoke-RestMethod -Method Post `
+  -Uri "http://localhost:5678/webhook/chatbot" `
+  -Body '{"message":"Bonjour","userId":"test"}' `
   -ContentType "application/json"
-Solution : Vérifier que TOOLS est bien défini et que les fonctions sont importées
+```
 
-🎓 Ce que vous avez appris
+---
 
-Protocole MCP : Communication standardisée entre LLMs et outils
-JSON-RPC 2.0 : Format de requête/réponse pour API
-Docker Networking : Résolution DNS entre conteneurs
-Healthchecks : Vérification de santé des services
-Dépendances Docker : Ordre de démarrage avec depends_on
-CORS : Autorisation des requêtes cross-origin
-Asyncio Python : Serveur web asynchrone avec aiohttp
+## 🌐 Partie 4 : Intégration Wiki Next.js
+
+### 4.1 Pourquoi localhost:5678 fonctionne
+
+**Le pont entre Docker et Next.js :**
+```
+Wiki Next.js (hors Docker)
+    │
+    │ Accès au port EXPOSÉ
+    ↓
+localhost:5678 → n8n (dans Docker)
+    │
+    │ Communication INTERNE au réseau Docker
+    ↓
+chat-help-mcp:8080, ollama:11434, etc.
+Le port 5678 est exposé dans docker-compose, donc accessible depuis la machine hôte via localhost:5678.
+4.2 API Route Next.js
+Créer /pages/api/chatbot.js :
+javascriptexport default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { message, userId, sessionId } = req.body;
+  
+  // ✅ Communication via port exposé
+  const N8N_WEBHOOK_URL = 'http://localhost:5678/webhook/chatbot';
+
+  const response = await fetch(N8N_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: message.trim(),
+      userId: userId || 'anonymous',
+      sessionId: sessionId || `session_${Date.now()}`
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  const data = await response.json();
+  
+  return res.status(200).json({
+    response: data.output,
+    timestamp: data.timestamp
+  });
+}
+Points clés :
+
+URL : http://localhost:5678 (pas d'hostname Docker)
+Timeout de 30 secondes
+Gestion d'erreurs
+
+4.3 Page Chatbot
+Créer /pages/chatbot.js :
+javascriptimport { useState } from 'react';
+import Header from '../components/Header';
+
+export default function ChatbotPage() {
+  const [messages, setMessages] = useState([...]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    
+    // Ajouter message utilisateur
+    setMessages(prev => [...prev, { type: 'user', content: input }]);
+    setLoading(true);
+
+    // Appel API
+    const response = await fetch('/api/chatbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: input, userId: 'user123' })
+    });
+
+    const data = await response.json();
+    
+    // Ajouter réponse bot
+    setMessages(prev => [...prev, { type: 'bot', content: data.response }]);
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <Header />
+      {/* Interface chat */}
+    </>
+  );
+}
+4.4 Navigation (Card dans index.js)
+jsx<Link href="/chatbot">
+  <div className="nav-category chatbot">
+    <span className="nav-category-icon">🤖</span>
+    <h3>Assistant IA</h3>
+    <p>Chatbot avec n8n et MCP</p>
+  </div>
+</Link>
+
+🧪 Partie 5 : Tests et Validation
+Test 1 : Infrastructure Docker
+powershell# Vérifier les conteneurs
+docker ps
+
+# Tester MCP
+Invoke-RestMethod http://localhost:8080/health
+
+# Tester n8n
+Invoke-RestMethod http://localhost:5678
+Test 2 : Workflow n8n
+powershell# Test direct du webhook
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:5678/webhook/chatbot" `
+  -Body '{"message":"Test","userId":"test"}' `
+  -ContentType "application/json"
+Test 3 : Intégration complète
+powershell# Démarrer Wiki
+cd M:\Projet-Automne-2025-Wiki
+npm run dev
+
+# Ouvrir http://localhost:3000
+# Cliquer sur "Assistant IA"
+# Envoyer un message
+
+🔧 Dépannage
+Erreur : "n8n is not available"
+powershell# Vérifier n8n
+docker logs chat-help-n8n --tail 20
+docker restart chat-help-n8n
+```
+
+### Erreur : "Error in workflow"
+
+**Dans n8n :**
+1. Aller dans "Executions"
+2. Cliquer sur l'exécution en erreur
+3. Identifier le nœud en rouge
+
+**Causes fréquentes :**
+- Postgres Memory sans `sessionId`
+- Ollama sans modèle installé : `docker exec -it chat-help-ollama ollama pull llama2`
+- MCP Server injoignable
+
+### Erreur : "webhook not registered"
+
+**Le workflow n8n n'est pas activé.**
+
+Solution : Activer le toggle en haut à droite dans n8n.
+
+---
+
+## 📊 Schéma de communication complet
+```
+User Browser (localhost:3000/chatbot)
+    │
+    ├─► Envoie message via formulaire
+    │
+    ↓
+Next.js API Route (/api/chatbot)
+    │
+    ├─► fetch('http://localhost:5678/webhook/chatbot')
+    │
+    ↓
+Docker Network (n8n reçoit via port 5678)
+    │
+    ├─► Webhook → Extract Data → AI Agent
+    │                              │
+    │                              ├─► Ollama (http://ollama:11434)
+    │                              ├─► Postgres Memory
+    │                              └─► MCP Client
+    │                                  └─► POST http://chat-help-mcp:8080/
+    │                                      (JSON-RPC: tools/call)
+    │                                      │
+    │                                      └─► Exécute navigate_web(), etc.
+    │
+    └─► Format Response → Retour au webhook → Next.js → Browser
+
+🎯 Points clés à retenir
+Communication MCP ↔ n8n
+
+HTTP Streamable pour temps-réel
+CORS activé dans le MCP Server
+JSON-RPC 2.0 comme protocole
+Hostname Docker : chat-help-mcp:8080
+
+Communication n8n ↔ Next.js
+
+Port exposé : 5678
+URL depuis Next.js : http://localhost:5678
+Webhook path : /webhook/chatbot
+Pas de hostname Docker depuis Next.js
+
+Workflow n8n
+
+Webhook : Point d'entrée
+Extract Data : Prépare les données
+AI Agent : Orchestre Ollama + Memory + MCP
+Format Response : Structure la réponse
 
 
-🚀 Pour aller plus loin
+✅ Checklist finale
 
-Ajouter de nouveaux outils : Créez une fonction dans /tools/ et ajoutez-la à TOOLS
-Monitorer les logs : docker logs -f chat-help-mcp
-Sécuriser : Ajouter une authentification (API key)
-Scaler : Déployer plusieurs instances derrière un load balancer
+ Docker containers démarrés et healthy
+ Workflow n8n créé et activé
+ MCP Client configuré : http://chat-help-mcp:8080
+ Webhook testé directement
+ /pages/api/chatbot.js créé
+ /pages/chatbot.js créé
+ Card ajoutée dans index.js
+ Wiki démarré : npm run dev
+ Test end-to-end réussi
