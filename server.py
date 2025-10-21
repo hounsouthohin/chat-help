@@ -3,6 +3,7 @@
 Serveur MCP Production Ready
 Protocol: MCP 2024-11-05
 Transport: HTTP (compatible n8n MCP Client)
+Version: 2.1.0 - Avec Wiki Navigator
 """
 import asyncio
 import json
@@ -44,14 +45,17 @@ try:
         get_joke,
         motivational_quote
     )
-    logger.info("✅ Tous les outils chargés")
+    # ✅ AJOUT : Wiki Navigator
+    from tools.wiki_navigator import wiki_search, wiki_get_article, wiki_list_categories
+    
+    logger.info("✅ Tous les outils chargés (incluant Wiki Navigator)")
 except Exception as e:
     logger.error(f"❌ Erreur import: {e}", exc_info=True)
     sys.exit(1)
 
 
 # ====================================================
-# DÉFINITION DES OUTILS - SCHEMAS SIMPLIFIÉS
+# DÉFINITION DES OUTILS - SCHEMAS
 # ====================================================
 
 TOOLS = [
@@ -69,7 +73,8 @@ TOOLS = [
         "description": "📡 Veille technologique - Actualités et tendances tech récentes",
         "inputSchema": {
             "type": "object",
-            "properties": {"keywords": {"type": "string", "description": "Mots-clés séparés par des virgules"}}
+            "properties": {"keywords": {"type": "string", "description": "Mots-clés séparés par des virgules"}},
+            "required": ["keywords"]
         }
     },
     {
@@ -123,6 +128,53 @@ TOOLS = [
         "name": "motivational_quote",
         "description": "💪 Citation motivante sur la tech et le développement",
         "inputSchema": {"type": "object", "properties": {}}
+    },
+    # ✅ AJOUT : Outils Wiki Navigator
+    {
+        "name": "wiki_search",
+        "description": "🔍 Recherche dans la documentation du Wiki. Utilise cet outil pour trouver des guides, tutoriels et procédures techniques stockés dans le Wiki de développement.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Terme de recherche (ex: 'déploiement staging', 'tests unitaires', 'code review')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Nombre maximum de résultats (défaut: 5)",
+                    "default": 5
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filtrer par catégories (optionnel, ex: ['Déploiement', 'Tests'])"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "wiki_get_article",
+        "description": "📄 Récupère le contenu COMPLET d'un article du Wiki à partir de son ID. Utilise cet outil après avoir trouvé un article avec wiki_search pour obtenir tous les détails.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "article_id": {
+                    "type": "string",
+                    "description": "ID de l'article à récupérer (obtenu via wiki_search)"
+                }
+            },
+            "required": ["article_id"]
+        }
+    },
+    {
+        "name": "wiki_list_categories",
+        "description": "📚 Liste toutes les catégories de documentation disponibles dans le Wiki avec le nombre d'articles par catégorie.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 ]
 
@@ -140,6 +192,10 @@ TOOLS_MAP = {
     "explain_concept": explain_concept,
     "get_joke": get_joke,
     "motivational_quote": motivational_quote,
+    # ✅ AJOUT : Wiki Navigator
+    "wiki_search": wiki_search,
+    "wiki_get_article": wiki_get_article,
+    "wiki_list_categories": wiki_list_categories,
 }
 
 
@@ -153,6 +209,7 @@ def normalize_arguments(tool_name: str, arguments: Any) -> Dict[str, Any]:
     logger.info(f"   Type reçu: {type(arguments)}")
     logger.info(f"   Valeur brute: {arguments}")
 
+    # ✅ AJOUT : Gestion des outils Wiki Navigator
     if isinstance(arguments, str):
         logger.info("   → Conversion string vers dict")
         if tool_name == "navigate_web":
@@ -167,6 +224,11 @@ def normalize_arguments(tool_name: str, arguments: Any) -> Dict[str, Any]:
             return {"language": "fr"}
         elif tool_name == "analyze_code_expert":
             return {"code": arguments, "language": "python"}
+        # ✅ AJOUT
+        elif tool_name == "wiki_search":
+            return {"query": arguments, "limit": 5}
+        elif tool_name == "wiki_get_article":
+            return {"article_id": arguments}
         else:
             return {"input": arguments}
 
@@ -176,6 +238,8 @@ def normalize_arguments(tool_name: str, arguments: Any) -> Dict[str, Any]:
             return {}
         elif tool_name == "get_joke":
             return {"language": "fr"}
+        elif tool_name == "wiki_list_categories":
+            return {}
         return {}
 
     if isinstance(arguments, dict):
@@ -206,6 +270,11 @@ def normalize_arguments(tool_name: str, arguments: Any) -> Dict[str, Any]:
         if tool_name == "explain_concept":
             arguments.setdefault("level", "intermediaire")
 
+        # ✅ AJOUT : Normalisation Wiki Navigator
+        if tool_name == "wiki_search":
+            arguments.setdefault("limit", 5)
+            arguments.setdefault("categories", None)
+
         logger.info(f"   → Arguments finaux: {arguments}")
         return arguments
 
@@ -225,20 +294,34 @@ async def execute_tool(name: str, arguments: Any) -> Dict[str, Any]:
         logger.info("=" * 70)
 
         if name not in TOOLS_MAP:
-            return {"success": False, "error": f"Outil inconnu: {name}", "available_tools": list(TOOLS_MAP.keys())}
+            return {
+                "success": False, 
+                "error": f"Outil inconnu: {name}", 
+                "available_tools": list(TOOLS_MAP.keys())
+            }
 
         normalized_args = normalize_arguments(name, arguments)
         tool_func = TOOLS_MAP[name]
 
         logger.info("⚙️  Exécution de la fonction...")
-        result = await tool_func(**normalized_args) if asyncio.iscoroutinefunction(tool_func) else tool_func(**normalized_args)
+        
+        # Exécuter avec await si coroutine
+        if asyncio.iscoroutinefunction(tool_func):
+            result = await tool_func(**normalized_args)
+        else:
+            result = tool_func(**normalized_args)
 
         logger.info(f"✅ Résultat obtenu: {len(str(result))} caractères")
         return result
 
     except Exception as e:
         logger.error(f"❌ Erreur dans {name}: {e}", exc_info=True)
-        return {"success": False, "error": str(e), "tool": name}
+        return {
+            "success": False, 
+            "error": str(e), 
+            "tool": name,
+            "hint": "Vérifiez les paramètres et la connexion au Wiki"
+        }
 
 
 # ====================================================
@@ -283,11 +366,13 @@ class MCPHTTPServer:
         return web.json_response({
             "status": "healthy",
             "service": "chat-help-mcp",
-            "version": "2.0.0",
+            "version": "2.1.0",
             "protocol": "MCP-HTTP",
             "tools_count": len(TOOLS),
             "initialized": self.initialized,
-            "tools": [t["name"] for t in TOOLS]
+            "tools": [t["name"] for t in TOOLS],
+            "wiki_enabled": True,  # ✅ AJOUT
+            "wiki_url": os.getenv("WIKI_URL", "not_configured")
         })
 
     async def handle_jsonrpc(self, request):
@@ -319,7 +404,11 @@ class MCPHTTPServer:
         return self.make_response(req_id, {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "chat-help", "version": "2.0.0"}
+            "serverInfo": {
+                "name": "chat-help",
+                "version": "2.1.0",
+                "description": "MCP Server avec Wiki Navigator"
+            }
         })
 
     async def handle_tools_list(self, req_id):
@@ -328,10 +417,12 @@ class MCPHTTPServer:
     async def handle_tool_call(self, params, req_id):
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
+        
         if not tool_name:
             return self.make_error(req_id, -32602, "Missing tool name")
 
         result = await execute_tool(tool_name, arguments)
+        
         return self.make_response(req_id, {
             "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}]
         })
@@ -371,7 +462,12 @@ async def main():
     site = web.TCPSite(runner, host, port)
     await site.start()
 
-    logger.info(f"🚀 MCP HTTP Server running at http://{host}:{port}")
+    logger.info("=" * 70)
+    logger.info(f"🚀 MCP HTTP Server v2.1.0 running at http://{host}:{port}")
+    logger.info(f"📚 Wiki URL: {os.getenv('WIKI_URL', 'not_configured')}")
+    logger.info(f"🔧 Tools available: {len(TOOLS)}")
+    logger.info("=" * 70)
+    
     await asyncio.Event().wait()
 
 

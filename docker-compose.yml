@@ -12,12 +12,17 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
+    # ✅ AJOUT : Accès à l'hôte pour le Wiki
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PYTHONUNBUFFERED=1
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8080
       - SEARXNG_URL=http://searxng:8080
       - MINIFLUX_URL=http://miniflux:8080
+      # ✅ AJOUT : URL du Wiki
+      - WIKI_URL=${WIKI_URL:-http://10.10.10.89:3000}
     command: python server.py
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1"]
@@ -46,8 +51,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # === OLLAMA (version simple) ===
-# === OLLAMA (version corrigée) ===
+  # === OLLAMA ===
   ollama:
     image: ollama/ollama:latest
     container_name: chat-help-ollama
@@ -99,6 +103,8 @@ services:
       - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
       - N8N_RUNNERS_ENABLED=true
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_EXECUTIONS_TIMEOUT=300  # ✅ 300 secondes (5 minutes)
+      - N8N_EXECUTIONS_TIMEOUT_MAX=600  # ✅ Max 10 minutes
 
   # === AUTRES SERVICES ===
   qdrant:
