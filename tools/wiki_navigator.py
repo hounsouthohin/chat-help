@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger(__name__)
 
 # Configuration
-WIKI_BASE_URL = os.getenv("WIKI_URL", "http://host.docker.internal:3000")
+WIKI_BASE_URL = os.getenv("WIKI_URL=http://10.10.10.5:3001", "http://host.docker.internal:3000")
 
 
 async def wiki_search(query: str, limit: int = 5, categories: Optional[List[str]] = None) -> Dict[str, Any]:

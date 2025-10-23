@@ -1,0 +1,2 @@
+*faire en sorte que l'agent s'affiche comme une petite bulle,et s'affiche partout sur la page.
+* La consultation des articles doit se faire sur la meme page : eviter que les articles ne s'affichent sur une autre page
