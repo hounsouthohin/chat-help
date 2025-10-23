@@ -9,10 +9,9 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "9080:8080"  # ✅ MODIFIÉ : Port unique pour chat-help-mcp
     volumes:
       - ./data:/app/data
-    # ✅ AJOUT : Accès à l'hôte pour le Wiki
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -21,8 +20,6 @@ services:
       - MCP_PORT=8080
       - SEARXNG_URL=http://searxng:8080
       - MINIFLUX_URL=http://miniflux:8080
-      # ✅ AJOUT : URL du Wiki
-      #- WIKI_URL=${WIKI_URL:-http://10.10.10.89:3000}
       - WIKI_URL=http://10.10.10.5:3001
     command: python server.py
     healthcheck:
@@ -52,25 +49,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # === OLLAMA ===
-  ollama:
-    image: ollama/ollama:latest
-    container_name: chat-help-ollama
-    hostname: ollama
-    networks:
-      - demo
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_storage:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
   # === N8N ===
   n8n:
     image: n8nio/n8n:latest
@@ -80,15 +58,13 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "5688:5678"  # ✅ MODIFIÉ : Port unique pour chat-help-n8n (évite le n8n existant sur 5678 et 5680)
     volumes:
       - n8n_storage:/home/node/.n8n
     depends_on:
       postgres:
         condition: service_healthy
       chat-help-mcp:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     environment:
       - DB_TYPE=postgresdb
@@ -99,13 +75,12 @@ services:
       - DB_POSTGRESDB_PASSWORD=password
       - N8N_ENCRYPTION_KEY=super-secret-key
       - N8N_USER_MANAGEMENT_JWT_SECRET=even-more-secret
-      - OLLAMA_HOST=ollama:11434
       - N8N_SKIP_RESPONSE_COMPRESSION=true
       - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
       - N8N_RUNNERS_ENABLED=true
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      - N8N_EXECUTIONS_TIMEOUT=300  # ✅ 300 secondes (5 minutes)
-      - N8N_EXECUTIONS_TIMEOUT_MAX=600  # ✅ Max 10 minutes
+      - N8N_EXECUTIONS_TIMEOUT=300
+      - N8N_EXECUTIONS_TIMEOUT_MAX=600
 
   # === AUTRES SERVICES ===
   qdrant:
@@ -116,7 +91,7 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "6333:6333"
+      - "6334:6333"  # ✅ MODIFIÉ : 6334 au lieu de 6333 (RÉSOUT TON ERREUR!)
     volumes:
       - qdrant_storage:/qdrant/storage
 
@@ -128,7 +103,7 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "8081:8080"
+      - "9081:8080"  # ✅ MODIFIÉ : Port unique pour chat-help-searxng
     volumes:
       - ./searxng:/etc/searxng
 
@@ -154,7 +129,7 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "8082:8080"
+      - "9082:8080"  # ✅ MODIFIÉ : Port unique pour chat-help-miniflux
     depends_on:
       - miniflux-db
     environment:
@@ -167,7 +142,6 @@ services:
 volumes:
   n8n_storage:
   postgres_storage:
-  ollama_storage:
   qdrant_storage:
   miniflux_db:
 
