@@ -22,7 +22,8 @@ services:
       - SEARXNG_URL=http://searxng:8080
       - MINIFLUX_URL=http://miniflux:8080
       # ✅ AJOUT : URL du Wiki
-      - WIKI_URL=${WIKI_URL:-http://10.10.10.89:3000}
+      #- WIKI_URL=${WIKI_URL:-http://10.10.10.89:3000}
+      - WIKI_URL=http://10.10.10.5:3001
     command: python server.py
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1"]
