@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 
-WIKI_BASE_URL = os.getenv("WIKI_URL", "http://host.docker.internal:3001")
+WIKI_BASE_URL = os.getenv("WIKI_URL", "http://10.10.10.5:3001")
 
 async def wiki_search(query: str, limit: int = 5, categories: Optional[List[str]] = None) -> Dict[str, Any]:
     """
@@ -32,7 +32,7 @@ async def wiki_search(query: str, limit: int = 5, categories: Optional[List[str]
         
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
-                f"{WIKI_BASE_URL}/api/wiki/search",
+                f"{WIKI_BASE_URL}/api/wiki/article/recherche",
                 json={
                     "query": query,
                     "limit": limit,
@@ -179,7 +179,7 @@ async def wiki_list_categories() -> Dict[str, Any]:
         
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{WIKI_BASE_URL}/api/wiki/categories"
+                f"{WIKI_BASE_URL}/api/wiki/article/categories"
             )
             
             if response.status_code != 200:
