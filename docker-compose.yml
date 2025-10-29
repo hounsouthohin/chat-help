@@ -20,7 +20,7 @@ services:
       - MCP_PORT=8080
       - SEARXNG_URL=http://searxng:8080
       - MINIFLUX_URL=http://miniflux:8080
-      - WIKI_URL=http://10.10.10.5:3001
+      - WIKI_URL=https://10.10.10.5:4443
     command: python server.py
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1"]

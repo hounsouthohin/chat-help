@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 
-WIKI_BASE_URL = os.getenv("WIKI_URL", "http://10.10.10.5:3001")
+WIKI_BASE_URL = os.getenv("WIKI_URL", "https://10.10.10.5:4443")#modification du port effectue
 
 async def wiki_search(query: str, limit: int = 5, categories: Optional[List[str]] = None) -> Dict[str, Any]:
     """
