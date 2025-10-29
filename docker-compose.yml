@@ -9,7 +9,7 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "9080:8080"  # ✅ MODIFIÉ : Port unique pour chat-help-mcp
+      - "9080:8080"
     volumes:
       - ./data:/app/data
     extra_hosts:
@@ -29,73 +29,7 @@ services:
       retries: 5
       start_period: 15s
 
-  # === POSTGRES ===
-  postgres:
-    image: postgres:16-alpine
-    container_name: chat-help-postgres
-    hostname: postgres
-    networks:
-      - demo
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=root
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=n8n
-    volumes:
-      - postgres_storage:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U root']
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # === N8N ===
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: chat-help-n8n
-    hostname: n8n
-    networks:
-      - demo
-    restart: unless-stopped
-    ports:
-      - "5688:5678"  # ✅ MODIFIÉ : Port unique pour chat-help-n8n (évite le n8n existant sur 5678 et 5680)
-    volumes:
-      - n8n_storage:/home/node/.n8n
-    depends_on:
-      postgres:
-        condition: service_healthy
-      chat-help-mcp:
-        condition: service_healthy
-    environment:
-      - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=postgres
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=n8n
-      - DB_POSTGRESDB_USER=root
-      - DB_POSTGRESDB_PASSWORD=password
-      - N8N_ENCRYPTION_KEY=super-secret-key
-      - N8N_USER_MANAGEMENT_JWT_SECRET=even-more-secret
-      - N8N_SKIP_RESPONSE_COMPRESSION=true
-      - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
-      - N8N_RUNNERS_ENABLED=true
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      - N8N_EXECUTIONS_TIMEOUT=300
-      - N8N_EXECUTIONS_TIMEOUT_MAX=600
-      - N8N_SECURE_COOKIE=false  # ✅ AJOUTÉ : Permet l'accès via HTTP
-
-  # === AUTRES SERVICES ===
-  qdrant:
-    image: qdrant/qdrant
-    container_name: chat-help-qdrant
-    hostname: qdrant
-    networks:
-      - demo
-    restart: unless-stopped
-    ports:
-      - "6334:6333"  # ✅ MODIFIÉ : 6334 au lieu de 6333 (RÉSOUT TON ERREUR!)
-    volumes:
-      - qdrant_storage:/qdrant/storage
-
+  # === SEARXNG ===
   searxng:
     image: searxng/searxng:latest
     container_name: chat-help-searxng
@@ -104,10 +38,11 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "9081:8080"  # ✅ MODIFIÉ : Port unique pour chat-help-searxng
+      - "9081:8080"
     volumes:
       - ./searxng:/etc/searxng
 
+  # === MINIFLUX ===
   miniflux-db:
     image: postgres:15-alpine
     container_name: chat-help-miniflux-db
@@ -130,7 +65,7 @@ services:
       - demo
     restart: unless-stopped
     ports:
-      - "9082:8080"  # ✅ MODIFIÉ : Port unique pour chat-help-miniflux
+      - "9082:8080"
     depends_on:
       - miniflux-db
     environment:
@@ -141,9 +76,6 @@ services:
       - ADMIN_PASSWORD=admin123
 
 volumes:
-  n8n_storage:
-  postgres_storage:
-  qdrant_storage:
   miniflux_db:
 
 networks:
