@@ -12,8 +12,13 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger(__name__)
 
 # Configuration
+WIKI_BASE_URL = os.getenv("WIKI_URL", "https://10.10.10.5:4443")
 
-WIKI_BASE_URL = os.getenv("WIKI_URL", "https://10.10.10.5:4443")#modification du port effectue
+# ✅ AJOUTEZ CETTE LIGNE : Désactiver la vérification SSL
+import ssl
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
 async def wiki_search(query: str, limit: int = 5, categories: Optional[List[str]] = None) -> Dict[str, Any]:
     """
@@ -30,7 +35,8 @@ async def wiki_search(query: str, limit: int = 5, categories: Optional[List[str]
     try:
         logger.info(f"🔍 Recherche Wiki: '{query}'")
         
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # ✅ MODIFIEZ CETTE LIGNE : Ajoutez verify=False
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             response = await client.post(
                 f"{WIKI_BASE_URL}/api/wiki/article/recherche",
                 json={
@@ -115,7 +121,8 @@ async def wiki_get_article(article_id: str) -> Dict[str, Any]:
     try:
         logger.info(f"📄 Récupération article: {article_id}")
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        # ✅ MODIFIEZ CETTE LIGNE : Ajoutez verify=False
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
             response = await client.get(
                 f"{WIKI_BASE_URL}/api/wiki/article/{article_id}"
             )
@@ -177,7 +184,8 @@ async def wiki_list_categories() -> Dict[str, Any]:
     try:
         logger.info("📚 Récupération catégories")
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        # ✅ MODIFIEZ CETTE LIGNE : Ajoutez verify=False
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
             response = await client.get(
                 f"{WIKI_BASE_URL}/api/wiki/article/categories"
             )
