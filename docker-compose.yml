@@ -21,6 +21,7 @@ services:
       - SEARXNG_URL=http://searxng:8080
       - MINIFLUX_URL=http://miniflux:8080
       - WIKI_URL=https://10.10.10.5:4443
+      - QDRANT_URL=http://qdrant:6333  # ✅ Ajouté pour que MCP puisse utiliser Qdrant
     command: python server.py
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8080/health\")' || exit 1"]
@@ -28,6 +29,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  # === QDRANT (Base de données vectorielle) ===
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: chat-help-qdrant
+    hostname: qdrant
+    networks:
+      - demo
+    restart: unless-stopped
+    ports:
+      - "6335:6333"  # ✅ Port externe changé : 6335 au lieu de 6334 (évite conflit avec l'autre Qdrant)
+      - "6336:6334"  # ✅ Port gRPC (optionnel)
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333  # Port interne reste 6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
 
   # === SEARXNG ===
   searxng:
@@ -77,6 +95,7 @@ services:
 
 volumes:
   miniflux_db:
+  qdrant_storage:  # ✅ Ajouté pour persister les données Qdrant
 
 networks:
   demo:
